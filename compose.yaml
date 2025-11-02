@@ -1,0 +1,50 @@
+services:
+#  http-service:
+#    build:
+#      context: ./todo_cpp_restful_docker_github_actions_azure
+#    environment:
+#      NODE_ENV: production
+#    ports:
+#      - 3001:8080
+
+  service-a:
+    build:
+      context: ./service_a
+    environment:
+      NODE_ENV: production
+    ports:
+      - 8080:8080
+    develop:
+      watch:
+        - action: rebuild
+          path: .
+   
+  mysql:
+    image: mysql:latest
+    restart: always
+    container_name: mysql-container
+    environment:
+      MYSQL_ROOT_PASSWORD: pass
+      MYSQL_DATABASE: weather_db
+      MYSQL_USER: weather_db_user
+      MYSQL_PASSWORD: pass
+    ports:
+      - 3306:3306
+#    command: --init-file /data/application/init.sql
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql-init-files/init.sql:/docker-entrypoint-initdb.d/1.sql
+
+  phpmyadmin:
+    image: phpmyadmin
+    restart: always
+    ports:
+      - 8888:80
+    environment:
+      PMA_HOST: mysql
+    depends_on:
+      - mysql
+
+volumes:
+  mysql-data:    
+    
