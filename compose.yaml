@@ -18,7 +18,7 @@ services:
       watch:
         - action: rebuild
           path: .
-   
+
   mysql:
     image: mysql:latest
     restart: always
