@@ -1,17 +1,6 @@
+// Includes
 #include "crow.h"
-#include <iostream>
-#include <sqlite3.h>
-#include <string>
-#include <sstream>
-#include <ctime>
-#include <vector>
-
-#include "mysql_connection.h"
 #include "mysql_driver.h"
-#include <cppconn/driver.h>
-#include <cppconn/exception.h>
-#include <cppconn/resultset.h>
-#include <cppconn/statement.h>
 #include <cppconn/prepared_statement.h>
 
 enum EWeatherTableCols
@@ -32,6 +21,49 @@ struct SWeatherLine
     double temp_min = 0.d;
     double precipitation = 0.d;
     double cloudiness = 0.d;
+};
+
+namespace techtest
+{
+    bool parse_date(std::string DateStr, std::time_t& OutDate)
+    {
+        tm date_time = {};
+        std::time_t date_time_t;
+            
+        // Create a string stream to parse the date string
+        std::istringstream date_ss(DateStr);
+            
+        // Parse the date string using std::get_time
+        date_ss >> std::get_time(&date_time, "%Y/%m/%d");
+            
+        // Check if parsing was successful
+        if (date_ss.fail())
+        {
+            return false;
+        }
+            
+        // Convert the parsed date to a time_t value
+        date_time_t = mktime(&date_time);
+            
+        // Output the parsed date using std::asctime
+        OutDate = date_time_t;
+
+        return true;
+    }
+
+    bool parse_double(std::string DoubleStr, double& OutDouble)
+    {
+        try
+        {
+            [[maybe_unused]] OutDouble = std::stof(DoubleStr);
+        }
+        catch (std::invalid_argument const& ex)
+        {
+            return false;
+        }
+        
+        return true;
+    }
 };
 
 int main() {
@@ -152,53 +184,90 @@ int main() {
                     SWeatherLine weather_line_s;
                     std::stringstream line_ss(file_line);
                     std::string column;
-                    bool error = false;
-                    while (getline(line_ss, column, ';') && !error)
+                    bool parsing_error = false;
+                    while (getline(line_ss, column, ';') && !parsing_error)
                     {
                         CROW_LOG_INFO << " COL: " << column;
 
                         switch (i)
                         {
                             case EWeatherTableCols::DATE:
-                                {
-                                    tm date_time = {};
-                                    std::time_t date_time_t;
-            
-                                    // Create a string stream to parse the date string
-                                    std::istringstream date_ss(column);
-            
-                                    // Parse the date string using std::get_time
-                                    date_ss >> std::get_time(&date_time, "%Y/%m/%d");
-            
-                                    // Check if parsing was successful
-                                    if (date_ss.fail())
-                                    {
-                                        error = true;
-                                        CROW_LOG_ERROR << "Date parsing failed!" << '\n';
-                                    }
-            
-                                    // Convert the parsed date to a time_t value
-                                    date_time_t = mktime(&date_time);
-            
-                                    // Output the parsed date using std::asctime
-                                    weather_line_s.date = date_time_t;
-                                }                        
+                                parsing_error |= !techtest::parse_date(column, weather_line_s.date);
+                                //{
+                                //    tm date_time = {};
+                                //    std::time_t date_time_t;
+                                //
+                                //    // Create a string stream to parse the date string
+                                //    std::istringstream date_ss(column);
+                                //
+                                //    // Parse the date string using std::get_time
+                                //    date_ss >> std::get_time(&date_time, "%Y/%m/%d");
+                                //
+                                //    // Check if parsing was successful
+                                //    if (date_ss.fail())
+                                //    {
+                                //        parsing_error = true;
+                                //        CROW_LOG_ERROR << "Date parsing failed!" << '\n';
+                                //    }
+                                //
+                                //    // Convert the parsed date to a time_t value
+                                //    date_time_t = mktime(&date_time);
+                                //
+                                //    // Output the parsed date using std::asctime
+                                //    weather_line_s.date = date_time_t;
+                                //}                        
                                 break;
 
                             case EWeatherTableCols::CITY:
                                 weather_line_s.city = column; 
                                 break;
                             case EWeatherTableCols::TEMP_MAX:
-                                weather_line_s.temp_max = std::stof(column);
+                                parsing_error |= !techtest::parse_double(column, weather_line_s.temp_max);
+                                //try
+                                //{
+                                //    [[maybe_unused]] weather_line_s.temp_max = std::stof(column);
+                                //}
+                                //catch (std::invalid_argument const& ex)
+                                //{
+                                //    parsing_error = true;
+                                //    CROW_LOG_ERROR << "Float parsing failed!" << '\n';
+                                //}
                                 break;
                             case EWeatherTableCols::TEMP_MIN:
-                                weather_line_s.temp_min = std::stof(column);
+                                parsing_error |= !techtest::parse_double(column, weather_line_s.temp_min);
+                                //try
+                                //{
+                                //    [[maybe_unused]] weather_line_s.temp_min = std::stof(column);
+                                //}
+                                //catch (std::invalid_argument const& ex)
+                                //{
+                                //    parsing_error = true;
+                                //    CROW_LOG_ERROR << "Float parsing failed!" << '\n';
+                                //}
                                 break;
                             case EWeatherTableCols::PRECIPITATION:
-                                weather_line_s.precipitation = std::stof(column);
+                                parsing_error |= !techtest::parse_double(column, weather_line_s.precipitation);
+                                //try
+                                //{
+                                //    [[maybe_unused]] weather_line_s.precipitation = std::stof(column);
+                                //}
+                                //catch (std::invalid_argument const& ex)
+                                //{
+                                //    parsing_error = true;
+                                //    CROW_LOG_ERROR << "Float parsing failed!" << '\n';
+                                //}
                                 break;
                             case EWeatherTableCols::CLOUDINESS:
-                                weather_line_s.cloudiness = std::stof(column);
+                                parsing_error |= !techtest::parse_double(column, weather_line_s.cloudiness);
+                                //try
+                                //{
+                                //    [[maybe_unused]] weather_line_s.cloudiness = std::stof(column);
+                                //}
+                                //catch (std::invalid_argument const& ex)
+                                //{
+                                //    parsing_error = true;
+                                //    CROW_LOG_ERROR << "Float parsing failed!" << '\n';
+                                //}
                                 break;
                             default:
                                 break;
@@ -206,6 +275,7 @@ int main() {
                         i++;
                     }
 
+                    if (parsing_error) { continue; }
                     char buff[20];
                     strftime(buff, 20, "%Y-%m-%d %H:%M:%S", localtime(&weather_line_s.date));
                     CROW_LOG_INFO << " Value[" << i << "]: " << buff << '\n';
