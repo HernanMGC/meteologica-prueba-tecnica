@@ -27,6 +27,11 @@ enum EWeatherTableCols
 struct SWeatherLine
 {
     std::time_t date;
+    std::string city = "";
+    double temp_max = 0.d;
+    double temp_min = 0.d;
+    double precipitation = 0.d;
+    double cloudiness = 0.d;
 };
 
 int main() {
@@ -58,22 +63,22 @@ int main() {
         res = stmt->executeQuery("SELECT "
             "id"
             ", date"
-            // ", city"
-            // ", temp_max"
-            // ", temp_min"
-            // ", precipitation"
-            // ", cloudiness"
+            ", city"
+            ", temp_max"
+            ", temp_min"
+            ", precipitation"
+            ", cloudiness"
             " FROM weather"
-        ); // replace with your statement
+        );
         while (res->next()) {
             crow::json::wvalue weather_line;
             weather_line["id"] = res->getInt(1);
             weather_line["date"] = res->getString(2);
-            // weather_line["city"] = (const char*)sqlite3_column_text(stmt, 2);
-            // weather_line["temp_max"] = sqlite3_column_double(stmt, 3);
-            // weather_line["temp_min"] = sqlite3_column_double(stmt, 4);
-            // weather_line["precipitation"] = sqlite3_column_double(stmt, 5);
-            // weather_line["cloudiness"] = sqlite3_column_double(stmt, 6);
+            weather_line["city"] = res->getString(3);
+            weather_line["temp_max"] = (float)res->getDouble(4);
+            weather_line["temp_min"] = (float)res->getDouble(5);
+            weather_line["precipitation"] = (float)res->getDouble(6);
+            weather_line["cloudiness"] = (float)res->getDouble(7);
             weather_lines.push_back(weather_line);
         }
         delete res;
@@ -136,63 +141,81 @@ int main() {
                 std::istringstream file_ss(part_value.body);
 
                 sql::PreparedStatement* prep_stmt;
-                prep_stmt = con->prepareStatement("INSERT INTO weather (date) VALUES (?)");
-
+                prep_stmt = con->prepareStatement("INSERT INTO weather (date, city, temp_max, temp_min, precipitation, cloudiness) VALUES (?, ?, ?, ?, ?, ?)");
+                
                 for (std::string file_line; std::getline(file_ss, file_line); )
                 {
                     int i = 0;
 
-                    CROW_LOG_DEBUG << " Value: " << file_line << '\n';
-        
-                    std::vector<std::string> weather_line;
-                    std::stringstream line_ss(file_line);
-                    
-                    SWeatherLine weather_line_s;
+                    CROW_LOG_INFO << " Value: " << file_line;
 
-                    
-                    while (line_ss.good())
+                    SWeatherLine weather_line_s;
+                    std::stringstream line_ss(file_line);
+                    std::string column;
+                    bool error = false;
+                    while (getline(line_ss, column, ';') && !error)
                     {
-                        std::string column;
-                        getline(line_ss, column, ';');
-                        weather_line.push_back(column); 
-                       
-                        tm date_time = {};
-                        std::time_t date_time_t;
-        
-                        // Create a string stream to parse the date string
-                        std::istringstream date_ss(weather_line[i]);
-        
+                        CROW_LOG_INFO << " COL: " << column;
+
                         switch (i)
                         {
                             case EWeatherTableCols::DATE:
-        
-                                // Parse the date string using std::get_time
-                                date_ss >> std::get_time(&date_time, "%Y/%m/%d");
-        
-                                // Check if parsing was successful
-                                if (date_ss.fail())
                                 {
-                                    CROW_LOG_ERROR << "Date parsing failed!" << '\n';
-                                }
-        
-                                // Convert the parsed date to a time_t value
-                                date_time_t = mktime(&date_time);
-        
-                                // Output the parsed date using std::asctime
-                                weather_line_s.date = date_time_t;
+                                    tm date_time = {};
+                                    std::time_t date_time_t;
+            
+                                    // Create a string stream to parse the date string
+                                    std::istringstream date_ss(column);
+            
+                                    // Parse the date string using std::get_time
+                                    date_ss >> std::get_time(&date_time, "%Y/%m/%d");
+            
+                                    // Check if parsing was successful
+                                    if (date_ss.fail())
+                                    {
+                                        error = true;
+                                        CROW_LOG_ERROR << "Date parsing failed!" << '\n';
+                                    }
+            
+                                    // Convert the parsed date to a time_t value
+                                    date_time_t = mktime(&date_time);
+            
+                                    // Output the parsed date using std::asctime
+                                    weather_line_s.date = date_time_t;
+                                }                        
+                                break;
+
+                            case EWeatherTableCols::CITY:
+                                weather_line_s.city = column; 
+                                break;
+                            case EWeatherTableCols::TEMP_MAX:
+                                weather_line_s.temp_max = std::stof(column);
+                                break;
+                            case EWeatherTableCols::TEMP_MIN:
+                                weather_line_s.temp_min = std::stof(column);
+                                break;
+                            case EWeatherTableCols::PRECIPITATION:
+                                weather_line_s.precipitation = std::stof(column);
+                                break;
+                            case EWeatherTableCols::CLOUDINESS:
+                                weather_line_s.cloudiness = std::stof(column);
                                 break;
                             default:
                                 break;
                         }
                         i++;
                     }
+
                     char buff[20];
                     strftime(buff, 20, "%Y-%m-%d %H:%M:%S", localtime(&weather_line_s.date));
                     CROW_LOG_INFO << " Value[" << i << "]: " << buff << '\n';
-
                     prep_stmt->setDateTime(1, sql::SQLString(buff));
+                    prep_stmt->setString(2, weather_line_s.city);
+                    prep_stmt->setDouble(3,weather_line_s.temp_max);
+                    prep_stmt->setDouble(4,weather_line_s.temp_min);
+                    prep_stmt->setDouble(5,weather_line_s.precipitation);
+                    prep_stmt->setDouble(6,weather_line_s.cloudiness);
                     prep_stmt->execute();
-
                 }
 
                 delete prep_stmt;         
