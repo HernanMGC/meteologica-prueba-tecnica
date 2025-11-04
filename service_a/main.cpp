@@ -2,6 +2,12 @@
 #include "crow.h"
 #include "mysql_driver.h"
 #include <cppconn/prepared_statement.h>
+#include <boost/algorithm/string.hpp>
+#include <chrono>
+#include <openssl/md5.h>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
 
 enum EWeatherTableCols
 {
@@ -25,44 +31,97 @@ struct SWeatherLine
 
 namespace techtest
 {
-    bool parse_date(std::string DateStr, std::time_t& OutDate)
+    namespace parser
     {
-        tm date_time = {};
-        std::time_t date_time_t;
-            
-        // Create a string stream to parse the date string
-        std::istringstream date_ss(DateStr);
-            
-        // Parse the date string using std::get_time
-        date_ss >> std::get_time(&date_time, "%Y/%m/%d");
-            
-        // Check if parsing was successful
-        if (date_ss.fail())
+        bool parse_date(std::string DateStr, std::time_t& OutDate)
         {
-            return false;
-        }
-            
-        // Convert the parsed date to a time_t value
-        date_time_t = mktime(&date_time);
-            
-        // Output the parsed date using std::asctime
-        OutDate = date_time_t;
+            tm date_time = {};
+            std::time_t date_time_t;
+                
+            // Create a string stream to parse the date string
+            std::istringstream date_ss(DateStr);
+                
+            // Parse the date string using std::get_time
+            date_ss >> std::get_time(&date_time, "%Y/%m/%d");
+                
+            // Check if parsing was successful
+            if (date_ss.fail())
+            {
+                return false;
+            }
+                
+            // Convert the parsed date to a time_t value
+            date_time_t = mktime(&date_time);
+                
+            // Output the parsed date using std::asctime
+            OutDate = date_time_t;
 
-        return true;
+            return true;
+        }
+
+        bool parse_double(std::string DoubleStr, double& OutDouble)
+        {
+            try
+            {
+                [[maybe_unused]] OutDouble = std::stof(DoubleStr);
+            }
+            catch (std::invalid_argument const& ex)
+            {
+                return false;
+            }
+            
+            return true;
+        }
     }
 
-    bool parse_double(std::string DoubleStr, double& OutDouble)
+    namespace checksum
     {
-        try
-        {
-            [[maybe_unused]] OutDouble = std::stof(DoubleStr);
+        // Function to print the MD5 hash in hexadecimal format 
+        std::string get_MD5(unsigned char *md, long size = MD5_DIGEST_LENGTH){
+            std::ostringstream md5;
+    
+            for (int i = 0; i < size; i++){
+                md5 << std::hex << std::setw(2) << std::setfill('0') << (int)md[i];
+            }
+            return md5.str();
         }
-        catch (std::invalid_argument const& ex)
-        {
-            return false;
+
+        // Function to compute and print MD5 hash of a given string
+        std::string get_md5_from_string(const std::string &str){
+            unsigned char result[MD5_DIGEST_LENGTH];
+            MD5((unsigned char *)str.c_str(), str.length(), result);
+
+            return get_MD5(result);
         }
-        
-        return true;
+
+        // Function to compute and print MD5 hash of a file
+        std::string get_md5_from_file(const std::string &filePath){
+            std::ifstream file(filePath, std::ios::in | std::ios::binary | std::ios::ate);
+
+            if (!file.is_open()){
+                return "";
+            }
+
+            // Get file size
+            long fileSize = file.tellg();
+
+            // Allocate memory to hold the entire file
+            char *memBlock = new char[fileSize];
+
+            // Read the file into memory
+            file.seekg(0, std::ios::beg);
+            file.read(memBlock, fileSize);
+            file.close();
+
+            // Compute the MD5 hash of the file content
+            unsigned char result[MD5_DIGEST_LENGTH];
+            MD5((unsigned char *)memBlock, fileSize, result);
+
+            // Clean up
+            delete[] memBlock;
+
+            return get_MD5(result);
+        }
     }
 };
 
@@ -119,14 +178,21 @@ int main() {
         return crow::response{200, crow::json::wvalue{{"weather_lines", weather_lines}}};
     });
 
-    CROW_ROUTE(app, "/weather")
+    CROW_ROUTE(app, "/ingest/csv")
     .methods("POST"_method)([&con](const crow::request& req) {
+        std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+
         crow::multipart::message file_message(req);
+
+        int successful_insert = 0;
+        int rejected_insert = 0;
+        std::string file_checksum = "";
+
         for (const auto& part : file_message.part_map)
         {
             const auto& part_name = part.first;
             const auto& part_value = part.second;
-            CROW_LOG_DEBUG << "Part: " << part_name;
+            CROW_LOG_INFO << "Part: " << part_name;
             if ("InputFile" == part_name)
             {
                 // Extract the file name
@@ -167,132 +233,108 @@ int main() {
                 out_file << part_value.body;
                 out_file.close();
                 CROW_LOG_INFO << " Contents written to " << outfile_name << '\n';
+                file_checksum = techtest::checksum::get_md5_from_file(outfile_name);
             }
-            else
+            else if ("file" == part_name)
             {
                 std::istringstream file_ss(part_value.body);
-
+                file_checksum = techtest::checksum::get_md5_from_string(file_ss.str());
+                
                 sql::PreparedStatement* prep_stmt;
                 prep_stmt = con->prepareStatement("INSERT INTO weather (date, city, temp_max, temp_min, precipitation, cloudiness) VALUES (?, ?, ?, ?, ?, ?)");
                 
                 for (std::string file_line; std::getline(file_ss, file_line); )
                 {
                     int i = 0;
-
+                    
+                    boost::trim(file_line);
                     CROW_LOG_INFO << " Value: " << file_line;
 
-                    SWeatherLine weather_line_s;
                     std::stringstream line_ss(file_line);
                     std::string column;
                     bool parsing_error = false;
                     while (getline(line_ss, column, ';') && !parsing_error)
                     {
-                        CROW_LOG_INFO << " COL: " << column;
+                        boost::trim(column);
 
                         switch (i)
                         {
                             case EWeatherTableCols::DATE:
-                                parsing_error |= !techtest::parse_date(column, weather_line_s.date);
-                                //{
-                                //    tm date_time = {};
-                                //    std::time_t date_time_t;
-                                //
-                                //    // Create a string stream to parse the date string
-                                //    std::istringstream date_ss(column);
-                                //
-                                //    // Parse the date string using std::get_time
-                                //    date_ss >> std::get_time(&date_time, "%Y/%m/%d");
-                                //
-                                //    // Check if parsing was successful
-                                //    if (date_ss.fail())
-                                //    {
-                                //        parsing_error = true;
-                                //        CROW_LOG_ERROR << "Date parsing failed!" << '\n';
-                                //    }
-                                //
-                                //    // Convert the parsed date to a time_t value
-                                //    date_time_t = mktime(&date_time);
-                                //
-                                //    // Output the parsed date using std::asctime
-                                //    weather_line_s.date = date_time_t;
-                                //}                        
-                                break;
-
+                                {
+                                    std::time_t date;
+                                    parsing_error |= !techtest::parser::parse_date(column, date);
+                                    if (!parsing_error)
+                                    {
+                                        char buff[20];
+                                        strftime(buff, 20, "%Y-%m-%d %H:%M:%S", localtime(&date));
+                                        prep_stmt->setDateTime(i+1, sql::SQLString(buff));
+                                    }
+                                    else
+                                    {
+                                        CROW_LOG_ERROR << " Parsing error on : " << file_line <<  " Date could not be parsed and it is a NOT NULL column";
+                                    }
+                                    break;
+                                }
                             case EWeatherTableCols::CITY:
-                                weather_line_s.city = column; 
-                                break;
+                                {
+                                    std::string city = column; 
+                                    prep_stmt->setString(i+1, city);
+                                    break;
+                                }
                             case EWeatherTableCols::TEMP_MAX:
-                                parsing_error |= !techtest::parse_double(column, weather_line_s.temp_max);
-                                //try
-                                //{
-                                //    [[maybe_unused]] weather_line_s.temp_max = std::stof(column);
-                                //}
-                                //catch (std::invalid_argument const& ex)
-                                //{
-                                //    parsing_error = true;
-                                //    CROW_LOG_ERROR << "Float parsing failed!" << '\n';
-                                //}
-                                break;
                             case EWeatherTableCols::TEMP_MIN:
-                                parsing_error |= !techtest::parse_double(column, weather_line_s.temp_min);
-                                //try
-                                //{
-                                //    [[maybe_unused]] weather_line_s.temp_min = std::stof(column);
-                                //}
-                                //catch (std::invalid_argument const& ex)
-                                //{
-                                //    parsing_error = true;
-                                //    CROW_LOG_ERROR << "Float parsing failed!" << '\n';
-                                //}
-                                break;
                             case EWeatherTableCols::PRECIPITATION:
-                                parsing_error |= !techtest::parse_double(column, weather_line_s.precipitation);
-                                //try
-                                //{
-                                //    [[maybe_unused]] weather_line_s.precipitation = std::stof(column);
-                                //}
-                                //catch (std::invalid_argument const& ex)
-                                //{
-                                //    parsing_error = true;
-                                //    CROW_LOG_ERROR << "Float parsing failed!" << '\n';
-                                //}
-                                break;
                             case EWeatherTableCols::CLOUDINESS:
-                                parsing_error |= !techtest::parse_double(column, weather_line_s.cloudiness);
-                                //try
-                                //{
-                                //    [[maybe_unused]] weather_line_s.cloudiness = std::stof(column);
-                                //}
-                                //catch (std::invalid_argument const& ex)
-                                //{
-                                //    parsing_error = true;
-                                //    CROW_LOG_ERROR << "Float parsing failed!" << '\n';
-                                //}
-                                break;
+                                {
+                                    double double_value;
+                                    if (techtest::parser::parse_double(column, double_value))
+                                    {
+                                        prep_stmt->setDouble(i+1, double_value);
+                                    }
+                                    else
+                                    {
+                                        prep_stmt->setNull(i+1,0);
+                                    }
+                                    break;
+                                }
                             default:
                                 break;
                         }
                         i++;
                     }
 
-                    if (parsing_error) { continue; }
-                    char buff[20];
-                    strftime(buff, 20, "%Y-%m-%d %H:%M:%S", localtime(&weather_line_s.date));
-                    CROW_LOG_INFO << " Value[" << i << "]: " << buff << '\n';
-                    prep_stmt->setDateTime(1, sql::SQLString(buff));
-                    prep_stmt->setString(2, weather_line_s.city);
-                    prep_stmt->setDouble(3,weather_line_s.temp_max);
-                    prep_stmt->setDouble(4,weather_line_s.temp_min);
-                    prep_stmt->setDouble(5,weather_line_s.precipitation);
-                    prep_stmt->setDouble(6,weather_line_s.cloudiness);
-                    prep_stmt->execute();
+                    if (parsing_error)
+                    {
+                        rejected_insert++;
+                        CROW_LOG_ERROR << " Row rejected due parsing error: " << file_line <<  "";
+                        continue;
+                    }
+
+                    try
+                    {
+                        prep_stmt->execute();
+                        successful_insert++; 
+                    }
+                    catch (std::exception const & ex)
+                    {
+                        CROW_LOG_ERROR << " Row rejected on insert try: " << file_line <<  " " << ex.what();
+                        rejected_insert++; 
+                    }
                 }
 
                 delete prep_stmt;         
             }
         }
    
-        return crow::response{201, "{\"message\": \"THIS IS A LIE. Weather added successfully\"}"};
+        std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+        crow::json::wvalue response;
+        response["rows_inserted"] = successful_insert;
+        response["rows_rejected"] = rejected_insert;
+        std::ostringstream elapsed_time;
+        elapsed_time << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << "[µs]";;
+        response["elapsed_ms"] = elapsed_time.str();
+        response["file_checksum"] = file_checksum;
+        return crow::response{201, response};
     });
 
     app.port(8080).bindaddr("0.0.0.0").multithreaded().run();

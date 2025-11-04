@@ -23,7 +23,7 @@ RUN git clone https://github.com/CrowCpp/Crow.git crow
 COPY . .
 
 # Build the application using g++
-RUN g++ -Icrow/include -Iasio/asio/include -L/usr/local/lib -o service_a main.cpp -lsqlite3 -lpthread -lmysqlcppconn
+RUN g++ -Icrow/include -Iasio/asio/include -L/usr/local/lib -o service_a main.cpp -lsqlite3 -lpthread -lmysqlcppconn -lssl -lcrypto
 
 # Stage 2: Runtime Stage
 # Use an official GCC image (same as the build stage) for runtime
