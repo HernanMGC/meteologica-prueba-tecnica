@@ -152,8 +152,7 @@ int main() {
         sql::Statement *stmt;
 
         stmt = con->createStatement();
-        res = stmt->executeQuery("SELECT DISTINCT city FROM weather"
-        );
+        res = stmt->executeQuery("SELECT DISTINCT city FROM weather;");
         while (res->next()) {
             cities.push_back(res->getString(1));
         }
@@ -164,36 +163,85 @@ int main() {
     });
 
     CROW_ROUTE(app, "/weather")
-    .methods("GET"_method)([&con]() {
+    .methods("GET"_method)([&con](const crow::request& req) {
+        // city req
+        // from req
+        // to req
+        // page opt 1
+        // limit opt 10
+        std::string city = req.url_params.get("city") ? req.url_params.get("city") : "";
+        if (city == "")
+        {
+            return crow::response(500, "\"city\" parameter is required.");
+        }
+        
+        std::string from = req.url_params.get("from") ? req.url_params.get("from") : "";
+        if (from == "")
+        {
+            return crow::response(500, "\"from\" parameter is required.");
+        }
+        
+        
+        std::string to = req.url_params.get("to") ? req.url_params.get("to") : "";
+        if (to == "")
+        {
+            return crow::response(500, "\"to\" parameter is required.");
+        }
+
+        if (from > to)
+        {
+            return crow::response(500, "\"from\" date needs to be lower\before then \"to\" date.");
+        }
+        
+        int page = 1;
+        try
+        {
+            page = req.url_params.get("page") ? std::max(1, std::stoi(req.url_params.get("page"))) : 1;
+        }
+        catch (std::exception const & ex)
+        {
+            return crow::response(500, "\"page\" parameter needs to be an integer.");
+        }
+        
+        int limit = 10;
+        try
+        {
+            limit = req.url_params.get("limit") ? std::max(1, std::stoi(req.url_params.get("limit"))) : 10;
+        }
+        catch (std::exception const & ex)
+        {
+            return crow::response(500, "\"limit\" parameter needs to be an integer.");
+        }
+        
+           
         std::vector<crow::json::wvalue> weather_lines;
         
-        sql::ResultSet *res;
-        sql::Statement *stmt;
+        sql::ResultSet* res;
+        sql::PreparedStatement* prep_stmt;
 
-        stmt = con->createStatement();
-        res = stmt->executeQuery("SELECT "
-            "id"
-            ", date"
-            ", city"
-            ", temp_max"
-            ", temp_min"
-            ", precipitation"
-            ", cloudiness"
-            " FROM weather"
-        );
+        std::string query = "SELECT date, city, temp_max, temp_min, precipitation, cloudiness FROM weather WHERE city LIKE ? AND date >= ? AND date <= ? LIMIT ? OFFSET ?;";
+        prep_stmt = con->prepareStatement(query);
+        prep_stmt->setString(1, city);
+         prep_stmt->setDateTime(2, sql::SQLString(from));
+        prep_stmt->setDateTime(3, sql::SQLString(to));
+        prep_stmt->setInt(4, limit);
+        int offset = (page-1)*limit;
+        prep_stmt->setInt(5, offset);
+
+        res = prep_stmt->executeQuery();
+
         while (res->next()) {
             crow::json::wvalue weather_line;
-            weather_line["id"] = res->getInt(1);
-            weather_line["date"] = res->getString(2);
-            weather_line["city"] = res->getString(3);
-            weather_line["temp_max"] = (float)res->getDouble(4);
-            weather_line["temp_min"] = (float)res->getDouble(5);
-            weather_line["precipitation"] = (float)res->getDouble(6);
-            weather_line["cloudiness"] = (float)res->getDouble(7);
+            weather_line["date"] = res->getString(1);
+            weather_line["city"] = res->getString(2);
+            weather_line["temp_max"] = (float)res->getDouble(3);
+            weather_line["temp_min"] = (float)res->getDouble(4);
+            weather_line["precipitation"] = (float)res->getDouble(5);
+            weather_line["cloudiness"] = (float)res->getDouble(6);
             weather_lines.push_back(weather_line);
         }
         delete res;
-        delete stmt;
+        delete prep_stmt;
 
         return crow::response{200, crow::json::wvalue{{"weather_lines", weather_lines}}};
     });
