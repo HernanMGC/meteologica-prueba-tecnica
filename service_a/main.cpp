@@ -143,6 +143,26 @@ int main() {
         return crow::response{200, health_status};
     });
 
+    CROW_ROUTE(app, "/cities")
+    .methods("GET"_method)([&con]() {
+        crow::json::wvalue response;
+        std::vector<std::string> cities;
+
+        sql::ResultSet *res;
+        sql::Statement *stmt;
+
+        stmt = con->createStatement();
+        res = stmt->executeQuery("SELECT DISTINCT city FROM weather"
+        );
+        while (res->next()) {
+            cities.push_back(res->getString(1));
+        }
+        delete res;
+        delete stmt;
+        response["cities"] = cities;
+        return crow::response{200, response};
+    });
+
     CROW_ROUTE(app, "/weather")
     .methods("GET"_method)([&con]() {
         std::vector<crow::json::wvalue> weather_lines;
