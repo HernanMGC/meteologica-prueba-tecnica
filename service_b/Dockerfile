@@ -8,7 +8,8 @@ RUN apt-get update && apt-get install -y \
     make \
     wget \
     git \
-    libmysqlcppconn-dev \
+    libcurlpp-dev \
+    libboost-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Set the working directory for the build process
@@ -22,7 +23,7 @@ RUN git clone https://github.com/CrowCpp/Crow.git crow
 COPY . .
 
 # Build the application using g++
-RUN g++ -Icrow/include -Iasio/asio/include -Icurlpp/include -L/usr/local/lib -o service_a main.cpp -lpthread -lmysqlcppconn -lssl -lcrypto
+RUN g++ -Icrow/include -Iasio/asio/include -L/usr/local/lib -o service_b main.cpp -lpthread -lcurlpp -lcurl
 
 # Stage 2: Runtime Stage
 # Use an official GCC image (same as the build stage) for runtime
@@ -30,17 +31,18 @@ FROM gcc:14.2.0
 
 # Install only the runtime dependencies needed to run the app
 RUN apt-get update && apt-get install -y \
-    libmysqlcppconn-dev \
+    libcurlpp-dev \
+    libboost-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Set the working directory for the runtime container
 WORKDIR /app
 
-# Copy the compiled binary (service_a) from the build stage into the runtime container
-COPY --from=build /app/service_a .
+# Copy the compiled binary (service_b) from the build stage into the runtime container
+COPY --from=build /app/service_b .
 
 # Expose port 8080 for your app (modify this if needed based on your app's settings)
 EXPOSE 8080
 
 # Set the default command to run the application
-CMD ["./service_a"]
+CMD ["./service_b"]

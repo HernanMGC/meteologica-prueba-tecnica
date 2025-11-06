@@ -15,6 +15,33 @@ services:
       watch:
         - action: rebuild
           path: .
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+          
+  service-b:
+    container_name: service-b-container
+    build:
+      context: ./service_b
+    environment:
+      NODE_ENV: production
+    ports:
+      - 8090:8080
+    depends_on:
+      service-a:
+        condition: service_healthy
+        restart: true
+    develop:
+      watch:
+        - action: rebuild
+          path: .
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8090/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   mysql:
     image: mysql:latest

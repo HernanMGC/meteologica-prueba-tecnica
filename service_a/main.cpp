@@ -19,16 +19,6 @@ enum EWeatherTableCols
     CLOUDINESS
 };
 
-struct SWeatherLine
-{
-    std::time_t date;
-    std::string city = "";
-    double temp_max = 0.d;
-    double temp_min = 0.d;
-    double precipitation = 0.d;
-    double cloudiness = 0.d;
-};
-
 namespace techtest
 {
     namespace parser
@@ -164,33 +154,30 @@ int main() {
 
     CROW_ROUTE(app, "/weather")
     .methods("GET"_method)([&con](const crow::request& req) {
-        // city req
-        // from req
-        // to req
-        // page opt 1
-        // limit opt 10
         std::string city = req.url_params.get("city") ? req.url_params.get("city") : "";
-        if (city == "")
+        boost::trim(city);
+        if (city.empty())
         {
             return crow::response(500, "\"city\" parameter is required.");
         }
         
         std::string from = req.url_params.get("from") ? req.url_params.get("from") : "";
-        if (from == "")
+        boost::trim(from);
+        if (from.empty())
         {
             return crow::response(500, "\"from\" parameter is required.");
         }
         
-        
         std::string to = req.url_params.get("to") ? req.url_params.get("to") : "";
-        if (to == "")
+        boost::trim(to);
+        if (to.empty())
         {
             return crow::response(500, "\"to\" parameter is required.");
         }
 
         if (from > to)
         {
-            return crow::response(500, "\"from\" date needs to be lower\before then \"to\" date.");
+            return crow::response(500, "\"from\" date needs to be lower before then \"to\" date.");
         }
         
         int page = 1;
@@ -212,7 +199,6 @@ int main() {
         {
             return crow::response(500, "\"limit\" parameter needs to be an integer.");
         }
-        
            
         std::vector<crow::json::wvalue> weather_lines;
         
@@ -222,7 +208,7 @@ int main() {
         std::string query = "SELECT date, city, temp_max, temp_min, precipitation, cloudiness FROM weather WHERE city LIKE ? AND date >= ? AND date <= ? LIMIT ? OFFSET ?;";
         prep_stmt = con->prepareStatement(query);
         prep_stmt->setString(1, city);
-         prep_stmt->setDateTime(2, sql::SQLString(from));
+        prep_stmt->setDateTime(2, sql::SQLString(from));
         prep_stmt->setDateTime(3, sql::SQLString(to));
         prep_stmt->setInt(4, limit);
         int offset = (page-1)*limit;
@@ -408,5 +394,6 @@ int main() {
     app.port(8080).bindaddr("0.0.0.0").multithreaded().run();
 
     delete con;
+    delete driver;
     return 0;
 }
