@@ -4,23 +4,105 @@
 #include <cppconn/prepared_statement.h>
 #include <boost/algorithm/string.hpp>
 #include <chrono>
-#include <openssl/md5.h>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <openssl/sha.h>
 
 enum EWeatherTableCols
 {
-    DATE = 0,
+	NO_COLUMN = 0,
+    DATE,
     CITY,
     TEMP_MAX,
     TEMP_MIN,
     PRECIPITATION,
-    CLOUDINESS
+    CLOUDINESS,
+	MAX
 };
 
 namespace techtest
 {
+	struct weather_query_params
+	{
+		std::string city = "";
+		std::string from = "";
+		std::string to = "";
+		int page = 0;
+		int limit = 0;
+		int offset = 0;
+		bool is_valid = false;
+		std::string error_response_str;
+
+		weather_query_params(const crow::request& req)
+		{
+			std::vector<std::string> error_strings = {};
+
+            city = req.url_params.get("city") ? req.url_params.get("city") : "";
+            boost::trim(city);
+            if (city.empty())
+            {
+                error_strings.push_back("\"city\" parameter is required.");
+            }
+            
+            from = req.url_params.get("from") ? req.url_params.get("from") : "";
+            boost::trim(from);
+            if (from.empty())
+            {
+                error_strings.push_back("\"from\" parameter is required.");
+            }
+            
+            to = req.url_params.get("to") ? req.url_params.get("to") : "";
+            boost::trim(to);
+            if (to.empty())
+            {
+                error_strings.push_back("\"to\" parameter is required.");
+            }
+            
+            if (from > to)
+            {
+                error_strings.push_back("\"from\" date needs to be lower before then \"to\" date.");
+            }
+            
+            page = 1;
+            try
+            {
+                page = req.url_params.get("page") ? std::max(1, std::stoi(req.url_params.get("page"))) : 1;
+            }
+            catch (std::exception const & ex)
+            {
+                error_strings.push_back("\"page\" parameter needs to be an integer.");
+            }
+            
+            limit = 10;
+            try
+            {
+                limit = req.url_params.get("limit") ? std::max(1, std::stoi(req.url_params.get("limit"))) : 10;
+            }
+            catch (std::exception const & ex)
+            {
+                error_strings.push_back("\"limit\" parameter needs to be an integer.");
+            }
+			offset = (page - 1) * limit;
+
+			is_valid = !error_strings.empty();
+			
+			if (!is_valid)
+			{
+				std::ostringstream error_os;
+				error_os << error_strings[0];
+				
+				int i = 1;
+				while (i < error_strings.size())
+				{
+					error_os << " " << error_strings[i];
+				}
+
+				error_response_str = error_os.str();
+			}
+		}
+	};
+
     namespace parser
     {
         bool parse_date(std::string DateStr, std::time_t& OutDate)
@@ -53,7 +135,7 @@ namespace techtest
         {
             try
             {
-                [[maybe_unused]] OutDouble = std::stof(DoubleStr);
+                OutDouble = std::stof(DoubleStr);
             }
             catch (std::invalid_argument const& ex)
             {
@@ -62,55 +144,97 @@ namespace techtest
             
             return true;
         }
+	
+		bool prepare_stmt_column(sql::PreparedStatement& prep_stmt, EWeatherTableCols column_index, std::string column_value)
+		{
+			boost::trim(column_value);
+
+            switch (column_index)
+            {
+                case EWeatherTableCols::DATE:
+                    {
+                        std::time_t date;
+                        if (techtest::parser::parse_date(column_value, date))
+                        {
+                            char buff[20];
+                            strftime(buff, 20, "%Y-%m-%d %H:%M:%S", localtime(&date));
+                            prep_stmt.setDateTime(column_index, sql::SQLString(buff));
+                        }
+                        else
+                        {
+							return false;
+                            CROW_LOG_ERROR << " Parsing error on : " << column_value <<  " Date could not be parsed and it is a NOT NULL column";
+                        }
+                        break;
+                    }
+                case EWeatherTableCols::CITY:
+                    {
+                        std::string city = column_value; 
+                        prep_stmt.setString(column_index, city);
+                        break;
+                    }
+                case EWeatherTableCols::TEMP_MAX:
+                case EWeatherTableCols::TEMP_MIN:
+                case EWeatherTableCols::PRECIPITATION:
+                case EWeatherTableCols::CLOUDINESS:
+                    {
+                        double double_value;
+                        if (techtest::parser::parse_double(column_value, double_value))
+                        {
+                            prep_stmt.setDouble(column_index, double_value);
+                        }
+                        else
+                        {
+                            prep_stmt.setNull(column_index,0);
+                        }
+                        break;
+                    }
+                default:
+                    break;
+            }
+	
+			return true;
+		}
+		
+		bool prepare_stmt_for_line(sql::PreparedStatement& prep_stmt, std::string file_line)
+		{
+            EWeatherTableCols column_index = EWeatherTableCols::DATE;
+            
+            boost::trim(file_line);
+            CROW_LOG_INFO << " Value: " << file_line;
+
+            std::stringstream line_ss(file_line);
+			
+            std::string column;
+            bool parse_succesfull = true;
+            while (getline(line_ss, column, ';') && parse_succesfull && column_index != EWeatherTableCols::MAX)
+            {
+				parse_succesfull &= prepare_stmt_column(prep_stmt, column_index, column);
+                column_index = static_cast<EWeatherTableCols>(static_cast<int>(column_index + 1));
+            }
+
+			return parse_succesfull;
+		}
     }
 
     namespace checksum
     {
-        // Function to print the MD5 hash in hexadecimal format 
-        std::string get_MD5(unsigned char *md, long size = MD5_DIGEST_LENGTH){
-            std::ostringstream md5;
-    
-            for (int i = 0; i < size; i++){
-                md5 << std::hex << std::setw(2) << std::setfill('0') << (int)md[i];
-            }
-            return md5.str();
-        }
+		std::string sha256(const std::string str)
+		{
+            unsigned char hash[SHA256_DIGEST_LENGTH];
+            
+            SHA256_CTX sha256;
+            SHA256_Init(&sha256);
+            SHA256_Update(&sha256, str.c_str(), str.size());
+            SHA256_Final(hash, &sha256);
+            
+            std::stringstream ss;
+            
+            for(int i = 0; i < SHA256_DIGEST_LENGTH; i++){
+                ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>( hash[i] );
+		    }
 
-        // Function to compute and print MD5 hash of a given string
-        std::string get_md5_from_string(const std::string &str){
-            unsigned char result[MD5_DIGEST_LENGTH];
-            MD5((unsigned char *)str.c_str(), str.length(), result);
-
-            return get_MD5(result);
-        }
-
-        // Function to compute and print MD5 hash of a file
-        std::string get_md5_from_file(const std::string &filePath){
-            std::ifstream file(filePath, std::ios::in | std::ios::binary | std::ios::ate);
-
-            if (!file.is_open()){
-                return "";
-            }
-
-            // Get file size
-            long fileSize = file.tellg();
-
-            // Allocate memory to hold the entire file
-            char *memBlock = new char[fileSize];
-
-            // Read the file into memory
-            file.seekg(0, std::ios::beg);
-            file.read(memBlock, fileSize);
-            file.close();
-
-            // Compute the MD5 hash of the file content
-            unsigned char result[MD5_DIGEST_LENGTH];
-            MD5((unsigned char *)memBlock, fileSize, result);
-
-            // Clean up
-            delete[] memBlock;
-
-            return get_MD5(result);
+            return ss.str();
         }
     }
 };
@@ -154,65 +278,24 @@ int main() {
 
     CROW_ROUTE(app, "/weather")
     .methods("GET"_method)([&con](const crow::request& req) {
-        std::string city = req.url_params.get("city") ? req.url_params.get("city") : "";
-        boost::trim(city);
-        if (city.empty())
-        {
-            return crow::response(500, "\"city\" parameter is required.");
-        }
-        
-        std::string from = req.url_params.get("from") ? req.url_params.get("from") : "";
-        boost::trim(from);
-        if (from.empty())
-        {
-            return crow::response(500, "\"from\" parameter is required.");
-        }
-        
-        std::string to = req.url_params.get("to") ? req.url_params.get("to") : "";
-        boost::trim(to);
-        if (to.empty())
-        {
-            return crow::response(500, "\"to\" parameter is required.");
-        }
+    	techtest::weather_query_params query_params(req);
+		if (!query_params.is_valid)
+		{
+			return crow::response(500, query_params.error_response_str);
+		}        
 
-        if (from > to)
-        {
-            return crow::response(500, "\"from\" date needs to be lower before then \"to\" date.");
-        }
-        
-        int page = 1;
-        try
-        {
-            page = req.url_params.get("page") ? std::max(1, std::stoi(req.url_params.get("page"))) : 1;
-        }
-        catch (std::exception const & ex)
-        {
-            return crow::response(500, "\"page\" parameter needs to be an integer.");
-        }
-        
-        int limit = 10;
-        try
-        {
-            limit = req.url_params.get("limit") ? std::max(1, std::stoi(req.url_params.get("limit"))) : 10;
-        }
-        catch (std::exception const & ex)
-        {
-            return crow::response(500, "\"limit\" parameter needs to be an integer.");
-        }
-           
-        std::vector<crow::json::wvalue> weather_lines;
+		std::vector<crow::json::wvalue> weather_lines;
         
         sql::ResultSet* res;
         sql::PreparedStatement* prep_stmt;
 
         std::string query = "SELECT date, city, temp_max, temp_min, precipitation, cloudiness FROM weather WHERE city LIKE ? AND date >= ? AND date <= ? LIMIT ? OFFSET ?;";
         prep_stmt = con->prepareStatement(query);
-        prep_stmt->setString(1, city);
-        prep_stmt->setDateTime(2, sql::SQLString(from));
-        prep_stmt->setDateTime(3, sql::SQLString(to));
-        prep_stmt->setInt(4, limit);
-        int offset = (page-1)*limit;
-        prep_stmt->setInt(5, offset);
+        prep_stmt->setString(1, query_params.city);
+        prep_stmt->setDateTime(2, sql::SQLString(query_params.from));
+        prep_stmt->setDateTime(3, sql::SQLString(query_params.to));
+        prep_stmt->setInt(4, query_params.limit);
+        prep_stmt->setInt(5, query_params.offset);
 
         res = prep_stmt->executeQuery();
 
@@ -247,117 +330,17 @@ int main() {
             const auto& part_name = part.first;
             const auto& part_value = part.second;
             CROW_LOG_INFO << "Part: " << part_name;
-            if ("InputFile" == part_name)
-            {
-                // Extract the file name
-                auto headers_it = part_value.headers.find("Content-Disposition");
-                if (headers_it == part_value.headers.end())
-                {
-                    CROW_LOG_ERROR << "No Content-Disposition found";
-                    return crow::response(400);
-                }
-                auto params_it = headers_it->second.params.find("filename");
-                if (params_it == headers_it->second.params.end())
-                {
-                    CROW_LOG_ERROR << "Part with name \"InputFile\" should have a file";
-                    return crow::response(400);
-                }
-                const std::string outfile_name = params_it->second;
-        
-                for (const auto& part_header : part_value.headers)
-                {
-                    const auto& part_header_name = part_header.first;
-                    const auto& part_header_val = part_header.second;
-                    CROW_LOG_DEBUG << "Header: " << part_header_name << '=' << part_header_val.value;
-                    for (const auto& param : part_header_val.params)
-                    {
-                        const auto& param_key = param.first;
-                        const auto& param_val = param.second;
-                        CROW_LOG_DEBUG << " Param: " << param_key << ',' << param_val;
-                    }
-                }
-        
-                // Create a new file with the extracted file name and write file contents to it
-                std::ofstream out_file(outfile_name);
-                if (!out_file)
-                {
-                    CROW_LOG_ERROR << " Write to file failed\n";
-                    continue;
-                }
-                out_file << part_value.body;
-                out_file.close();
-                CROW_LOG_INFO << " Contents written to " << outfile_name << '\n';
-                file_checksum = techtest::checksum::get_md5_from_file(outfile_name);
-            }
-            else if ("file" == part_name)
+         	if ("file" == part_name)
             {
                 std::istringstream file_ss(part_value.body);
-                file_checksum = techtest::checksum::get_md5_from_string(file_ss.str());
+                file_checksum = techtest::checksum::sha256(file_ss.str());
                 
                 sql::PreparedStatement* prep_stmt;
                 prep_stmt = con->prepareStatement("INSERT INTO weather (date, city, temp_max, temp_min, precipitation, cloudiness) VALUES (?, ?, ?, ?, ?, ?)");
                 
                 for (std::string file_line; std::getline(file_ss, file_line); )
                 {
-                    int i = 0;
-                    
-                    boost::trim(file_line);
-                    CROW_LOG_INFO << " Value: " << file_line;
-
-                    std::stringstream line_ss(file_line);
-                    std::string column;
-                    bool parsing_error = false;
-                    while (getline(line_ss, column, ';') && !parsing_error)
-                    {
-                        boost::trim(column);
-
-                        switch (i)
-                        {
-                            case EWeatherTableCols::DATE:
-                                {
-                                    std::time_t date;
-                                    parsing_error |= !techtest::parser::parse_date(column, date);
-                                    if (!parsing_error)
-                                    {
-                                        char buff[20];
-                                        strftime(buff, 20, "%Y-%m-%d %H:%M:%S", localtime(&date));
-                                        prep_stmt->setDateTime(i+1, sql::SQLString(buff));
-                                    }
-                                    else
-                                    {
-                                        CROW_LOG_ERROR << " Parsing error on : " << file_line <<  " Date could not be parsed and it is a NOT NULL column";
-                                    }
-                                    break;
-                                }
-                            case EWeatherTableCols::CITY:
-                                {
-                                    std::string city = column; 
-                                    prep_stmt->setString(i+1, city);
-                                    break;
-                                }
-                            case EWeatherTableCols::TEMP_MAX:
-                            case EWeatherTableCols::TEMP_MIN:
-                            case EWeatherTableCols::PRECIPITATION:
-                            case EWeatherTableCols::CLOUDINESS:
-                                {
-                                    double double_value;
-                                    if (techtest::parser::parse_double(column, double_value))
-                                    {
-                                        prep_stmt->setDouble(i+1, double_value);
-                                    }
-                                    else
-                                    {
-                                        prep_stmt->setNull(i+1,0);
-                                    }
-                                    break;
-                                }
-                            default:
-                                break;
-                        }
-                        i++;
-                    }
-
-                    if (parsing_error)
+                    if (!techtest::parser::prepare_stmt_for_line(*prep_stmt, file_line))
                     {
                         rejected_insert++;
                         CROW_LOG_ERROR << " Row rejected due parsing error: " << file_line <<  "";
@@ -384,10 +367,10 @@ int main() {
         crow::json::wvalue response;
         response["rows_inserted"] = successful_insert;
         response["rows_rejected"] = rejected_insert;
-        std::ostringstream elapsed_time;
-        elapsed_time << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << "[µs]";;
-        response["elapsed_ms"] = elapsed_time.str();
-        response["file_checksum"] = file_checksum;
+        response["elapsed_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
+        std::ostringstream file_checksum_os;
+        file_checksum_os << "sha256:" << file_checksum;
+        response["file_checksum"] = file_checksum_os.str();
         return crow::response{201, response};
     });
 
