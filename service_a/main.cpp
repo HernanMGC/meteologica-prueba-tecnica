@@ -23,83 +23,83 @@ enum EWeatherTableCols
 
 namespace techtest
 {
-	struct weather_query_params
+	struct req_params_get_weather
 	{
-		std::string city = "";
-		std::string from = "";
-		std::string to = "";
-		int page = 0;
-		int limit = 0;
-		int offset = 0;
-		bool is_valid = false;
-		std::string error_response_str;
-
-		weather_query_params(const crow::request& req)
-		{
-			std::vector<std::string> error_strings = {};
-
-            city = req.url_params.get("city") ? req.url_params.get("city") : "";
-            boost::trim(city);
-            if (city.empty())
-            {
-                error_strings.push_back("\"city\" parameter is required.");
-            }
+        public:
+		    std::string city = "";
+		    std::string from = "";
+		    std::string to = "";
+		    int page = 0;
+		    int limit = 0;
+		    bool is_valid = false;
+		    std::string error_response_str;
+        
+        public:
+		    req_params_get_weather(const crow::request& req)
+		    {
+		    	std::vector<std::string> error_strings = {};
             
-            from = req.url_params.get("from") ? req.url_params.get("from") : "";
-            boost::trim(from);
-            if (from.empty())
-            {
-                error_strings.push_back("\"from\" parameter is required.");
-            }
-
-            to = req.url_params.get("to") ? req.url_params.get("to") : "";
-            boost::trim(to);
-            if (to.empty())
-            {
-                error_strings.push_back("\"to\" parameter is required.");
-            }
-
-            if (from > to)
-            {
-                error_strings.push_back("\"from\" date needs to be lower before then \"to\" date.");
-            }
-
-            page = 1;
-            try
-            {
-                page = req.url_params.get("page") ? std::max(1, std::stoi(req.url_params.get("page"))) : 1;
-            }
-            catch (std::exception const & ex)
-            {
-                error_strings.push_back("\"page\" parameter needs to be an integer.");
-            }
+                city = req.url_params.get("city") ? req.url_params.get("city") : "";
+                boost::trim(city);
+                if (city.empty())
+                {
+                    error_strings.push_back("\"city\" parameter is required.");
+                }
+                
+                from = req.url_params.get("from") ? req.url_params.get("from") : "";
+                boost::trim(from);
+                if (from.empty())
+                {
+                    error_strings.push_back("\"from\" parameter is required.");
+                }
             
-            limit = 10;
-            try
-            {
-                limit = req.url_params.get("limit") ? std::max(1, std::stoi(req.url_params.get("limit"))) : 10;
-            }
-            catch (std::exception const & ex)
-            {
-                error_strings.push_back("\"limit\" parameter needs to be an integer.");
-            }
-			offset = (page - 1) * limit;
-
-			is_valid = error_strings.empty();
-			
-			if (!is_valid)
-			{
-				std::ostringstream error_os;
-				
-				int i = 1;
-				while (i < error_strings.size())
-				{
-					error_os << " " << error_strings[i];
-				}
-
-				error_response_str = error_os.str();
-			}
-		}
+                to = req.url_params.get("to") ? req.url_params.get("to") : "";
+                boost::trim(to);
+                if (to.empty())
+                {
+                    error_strings.push_back("\"to\" parameter is required.");
+                }
+            
+                if (from > to)
+                {
+                    error_strings.push_back("\"from\" date needs to be lower before then \"to\" date.");
+                }
+            
+                page = 1;
+                try
+                {
+                    page = req.url_params.get("page") ? std::max(1, std::stoi(req.url_params.get("page"))) : 1;
+                }
+                catch (std::exception const & ex)
+                {
+                    error_strings.push_back("\"page\" parameter needs to be an integer.");
+                }
+                
+                limit = 10;
+                try
+                {
+                    limit = req.url_params.get("limit") ? std::max(1, std::stoi(req.url_params.get("limit"))) : 10;
+                }
+                catch (std::exception const & ex)
+                {
+                    error_strings.push_back("\"limit\" parameter needs to be an integer.");
+                }
+            
+		    	is_valid = error_strings.empty();
+		    	
+		    	if (!is_valid)
+		    	{
+		    		std::ostringstream error_os;
+		    		
+		    		int i = 1;
+		    		while (i < error_strings.size())
+		    		{
+		    			error_os << " " << error_strings[i];
+		    		}
+            
+		    		error_response_str = error_os.str();
+		    	}
+		    }
 	};
 
     namespace parser
@@ -277,11 +277,12 @@ int main() {
 
     CROW_ROUTE(app, "/weather")
     .methods("GET"_method)([&con](const crow::request& req) {
-    	techtest::weather_query_params query_params(req);
-		if (!query_params.is_valid)
+    	techtest::req_params_get_weather req_params(req);
+		if (!req_params.is_valid)
 		{
-			return crow::response(500, query_params.error_response_str);
-		}        
+			return crow::response(500, req_params.error_response_str);
+		}
+        int offset = (req_params.page - 1) * req_params.limit;
 
 		std::vector<crow::json::wvalue> days;
         
@@ -290,11 +291,11 @@ int main() {
 
         std::string query = "SELECT date, city, temp_max, temp_min, precipitation, cloudiness FROM weather WHERE city LIKE ? AND date >= ? AND date <= ? LIMIT ? OFFSET ?;";
         prep_stmt = con->prepareStatement(query);
-        prep_stmt->setString(1, query_params.city);
-        prep_stmt->setDateTime(2, sql::SQLString(query_params.from));
-        prep_stmt->setDateTime(3, sql::SQLString(query_params.to));
-        prep_stmt->setInt(4, query_params.limit);
-        prep_stmt->setInt(5, query_params.offset);
+        prep_stmt->setString(1, req_params.city);
+        prep_stmt->setDateTime(2, sql::SQLString(req_params.from));
+        prep_stmt->setDateTime(3, sql::SQLString(req_params.to));
+        prep_stmt->setInt(4, req_params.limit);
+        prep_stmt->setInt(5, offset);
 
         res = prep_stmt->executeQuery();
 
