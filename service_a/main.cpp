@@ -51,19 +51,19 @@ namespace techtest
             {
                 error_strings.push_back("\"from\" parameter is required.");
             }
-            
+
             to = req.url_params.get("to") ? req.url_params.get("to") : "";
             boost::trim(to);
             if (to.empty())
             {
                 error_strings.push_back("\"to\" parameter is required.");
             }
-            
+
             if (from > to)
             {
                 error_strings.push_back("\"from\" date needs to be lower before then \"to\" date.");
             }
-            
+
             page = 1;
             try
             {
@@ -85,12 +85,11 @@ namespace techtest
             }
 			offset = (page - 1) * limit;
 
-			is_valid = !error_strings.empty();
+			is_valid = error_strings.empty();
 			
 			if (!is_valid)
 			{
 				std::ostringstream error_os;
-				error_os << error_strings[0];
 				
 				int i = 1;
 				while (i < error_strings.size())
@@ -284,7 +283,7 @@ int main() {
 			return crow::response(500, query_params.error_response_str);
 		}        
 
-		std::vector<crow::json::wvalue> weather_lines;
+		std::vector<crow::json::wvalue> days;
         
         sql::ResultSet* res;
         sql::PreparedStatement* prep_stmt;
@@ -300,19 +299,20 @@ int main() {
         res = prep_stmt->executeQuery();
 
         while (res->next()) {
-            crow::json::wvalue weather_line;
-            weather_line["date"] = res->getString(1);
-            weather_line["city"] = res->getString(2);
-            weather_line["temp_max"] = (float)res->getDouble(3);
-            weather_line["temp_min"] = (float)res->getDouble(4);
-            weather_line["precipitation"] = (float)res->getDouble(5);
-            weather_line["cloudiness"] = (float)res->getDouble(6);
-            weather_lines.push_back(weather_line);
+            crow::json::wvalue day;
+            day["date"] = res->getString(1);
+            day["city"] = res->getString(2);
+            day["temp_max"] = (float)res->getDouble(3);
+            day["temp_min"] = (float)res->getDouble(4);
+            day["precipitation"] = (float)res->getDouble(5);
+            day["cloudiness"] = (float)res->getDouble(6);
+            days.push_back(day);
         }
+
         delete res;
         delete prep_stmt;
 
-        return crow::response{200, crow::json::wvalue{{"weather_lines", weather_lines}}};
+        return crow::response{200, crow::json::wvalue{{"days", days}}};
     });
 
     CROW_ROUTE(app, "/ingest/csv")
