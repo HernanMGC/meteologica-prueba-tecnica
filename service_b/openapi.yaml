@@ -1,0 +1,246 @@
+openapi: 3.0.4
+info:
+  title: Meteologica Techtest - Service B - OpenAPI 3.0
+  description: |-
+    Query API. Enables a easy access query method to Service A raw data. Allows to search by
+    city and date, unit conversion and aggretated data computation. It also has access to a cache
+    in which to save old queries to avoid repetitive DB access.
+  contact:
+    email: hernan.gonzalez.calderon@gmail.com
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+  version: 1.0.0
+servers:
+  - url: http://localhost:8090
+tags:
+  - name: health
+    description: Service health status.
+  - name: aggregated-queries
+    description: Queries for aggregated weather data.
+paths:
+  /health:
+    get:
+      tags:
+        - health
+      summary: Gets current service health status.
+      operationId: getHealthStatus
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ok'
+                
+  /weather/{city}:
+    get:
+      tags:
+        - aggregated-queries
+      summary: Return aggregated weather data for a city in a period of time.
+      operationId: ingestCSV
+      parameters:
+        - name: city
+          in: path
+          description: City to query about.
+          required: true
+          explode: false
+          schema:
+            type: string
+            example: Madrid
+        - name: date
+          in: query
+          description: Date the query must to start from.
+          required: true
+          explode: false
+          schema:
+            type: string
+            format: date
+            example: 2025-11-01
+        - name: days
+          in: query
+          description: How many days the query has to cover.
+          required: true
+          explode: false
+          schema:
+            type: integer
+            example: 2025-11-11
+        - name: agg
+          in: query
+          description: Aggregated method.
+          required: false
+          explode: false
+          schema:
+            type: string
+            enum:
+              - daily
+              - rolling7
+            default: daily
+            example: daily
+        - name: unit
+          in: query
+          description: Temperature unit between Celsius (c/C) or Fahrenheit (f/F).
+          required: false
+          explode: false
+          schema:
+            type: string
+            enum:
+              - C
+              - F
+            default: C
+            example: C
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - $ref: '#/components/schemas/ServiceBWeatherDaily'
+                - $ref: '#/components/schemas/ServiceBWeatherRolling7'
+  
+components:
+  schemas:
+    Ok:
+      type: object
+      properties:
+        status:
+          type: string
+          description: Status state
+          example: ok
+      required: 
+        - status
+    Cities:
+      type: object
+      properties:
+        cities:
+          type: array
+          items:
+            type: string
+          example: ["Madrid", "Valencia"]
+      required:
+        - cities
+    ServiceBWeatherDaily:
+      type: object
+      properties:
+        days:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                format: date
+                example: 2025-11-01
+              temp_max:
+                type: number
+                format: double
+                example: 10.0
+              temp_min:
+                type: number
+                format: double
+                example: 5.0
+              temp_mean:
+                type: number
+                format: double
+                example: 7.5
+              precipitation:
+                type: number
+                format: double
+                example: 10.0
+              cloudiness:
+                type: number
+                format: double
+                example: 10.0
+            required: 
+              - date
+              - temp_max
+              - temp_min
+              - temp_mean
+              - precipitation
+              - cloudiness
+        city:
+          type: string
+          example: Madrid
+        unit:
+          type: string
+          enum:
+            - C
+            - F
+          example: C
+        from:
+          type: string
+          format: date
+          example: 2025-11-01
+        to:
+          type: string
+          format: date
+          example: 2025-11-10
+      required:
+        - days
+        - city
+        - unit
+        - from
+        - to
+    ServiceBWeatherRolling7:
+      type: object
+      properties:
+        days:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                format: date
+                example: 2025-11-01
+              temp_rolling_mean:
+                type: number
+                format: double
+                example: 37.142857
+              precipitation_rolling_mean:
+                type: number
+                format: double
+                example: 0.142857
+              cloudiness_rolling_mean:
+                type: number
+                format: double
+                example: 13.428571
+            required:
+              - date
+              - temp_rolling_mean
+              - precipitation_rolling_mean
+              - cloudiness_rolling_mean
+        city:
+          type: string
+          example: Madrid
+        unit:
+          type: string
+          enum:
+            - C
+            - F
+          example: C
+        from:
+          type: string
+          format: date
+          example: 2025-11-01
+        to:
+          type: string
+          format: date
+          example: 2025-11-10
+      required:
+        - days
+        - city
+        - unit
+        - from
+        - to
+    Error:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+      required:
+        - code
+        - message

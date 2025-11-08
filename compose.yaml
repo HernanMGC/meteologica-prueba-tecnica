@@ -74,7 +74,23 @@ services:
       mysql:
         condition: service_healthy
         restart: true
+        
+  swagger-editor:
+    image: swaggerapi/swagger-editor
+    container_name: "swagger-editor-container"
+    ports:
+      - "8081:8080"
 
+  swagger-ui:
+    image: swaggerapi/swagger-ui
+    container_name: "swagger-ui-container"
+    ports:
+      - "8082:8080"
+    volumes:
+      - ./swagger/swagger.yml:/swagger.yml
+    environment:
+      SWAGGER_JSON: /swagger.yml
+      
 volumes:
   mysql-data:    
     

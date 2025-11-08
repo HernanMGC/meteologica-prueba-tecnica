@@ -1,5 +1,6 @@
 // Includes
 #include "crow.h"
+#include "crow/middlewares/cors.h"
 #include <boost/algorithm/string.hpp>
 #include <curlpp/cURLpp.hpp>
 #include <curlpp/Options.hpp>
@@ -23,6 +24,32 @@ constexpr uint64_t operator"" _hash(const char* str, size_t len)
 
 namespace techtest
 {
+
+	namespace parser
+	{
+        std::string safe_strftime(const char *fmt, const std::tm *t)
+		{
+            std::size_t len = 10; // Adjust initial length as desired. Maybe based on the length of fmt?
+            auto buff = std::make_unique<char[]>(len);
+            while (std::strftime(buff.get(), len, fmt, t) == 0)
+			{
+                len *= 2;
+                buff = std::make_unique<char[]>(len);
+            }
+
+            return std::string{buff.get()};
+        }
+	}
+
+    namespace units
+    {
+        double c_to_f(double c)
+        {   
+            // using the conversion formula
+            return ((c * 9.0 / 5.0) + 32.0);
+        }
+    }
+
 	struct req_params_get_weather
 	{
 		
@@ -72,7 +99,7 @@ namespace techtest
                     error_strings.push_back("\"date\" format was incorrect. Expected format is 'YYYY-MM-DD'.");
                 }
     	        date_time_t = mktime(&date);
-
+                CROW_LOG_INFO << "inner date_time_t " << techtest::parser::safe_strftime("%Y-%m-%d", std::localtime(&(date_time_t)));
                 days = 5;
                 try
                 {
@@ -115,35 +142,26 @@ namespace techtest
 		    	}
 		    }
 	};
-
-	namespace parser
-	{
-        std::string safe_strftime(const char *fmt, const std::tm *t)
-		{
-            std::size_t len = 10; // Adjust initial length as desired. Maybe based on the length of fmt?
-            auto buff = std::make_unique<char[]>(len);
-            while (std::strftime(buff.get(), len, fmt, t) == 0)
-			{
-                len *= 2;
-                buff = std::make_unique<char[]>(len);
-            }
-
-            return std::string{buff.get()};
-        }
-	}
-
-    namespace units
-    {
-        double c_to_f(double c)
-        {   
-            // using the conversion formula
-            return ((c * 9.0 / 5.0) + 32.0);
-        }
-    }
 }
 
 int main() {
-    crow::SimpleApp app;
+
+    // Enable CORS
+    crow::App<crow::CORSHandler> app;
+
+    // Customize CORS
+    auto& cors = app.get_middleware<crow::CORSHandler>();
+
+    // clang-format off
+    cors
+      .global()
+        .headers("X-Custom-Header", "Upgrade-Insecure-Requests")
+        .methods("POST"_method, "GET"_method)
+      .prefix("/cors")
+        .origin("example.com")
+      .prefix("/nocors")
+        .ignore();
+    // clang-format on
 
     CROW_ROUTE(app, "/health")
 	.methods("GET"_method)([]() {
@@ -162,8 +180,12 @@ int main() {
 
 		int limit = req_params.days;
 
+        std::time_t req_params_date_time_t;
         std::time_t from_date_time_t;
         std::time_t to_date_time_t;
+
+        tm req_params_date_time = req_params.date;
+        req_params_date_time_t = mktime(&req_params_date_time);
 
         tm from_date_time = req_params.date;
 		if (req_params.agg == "rolling7")
@@ -177,6 +199,7 @@ int main() {
 	    to_date_time.tm_mday += req_params.days - 1;
         to_date_time_t = mktime(&to_date_time);
 
+        std::string req_params_date_str = techtest::parser::safe_strftime("%Y-%m-%d", std::localtime(&req_params_date_time_t));
         std::string from = techtest::parser::safe_strftime("%Y-%m-%d", std::localtime(&from_date_time_t));
         std::string to = techtest::parser::safe_strftime("%Y-%m-%d", std::localtime(&to_date_time_t));
         int page = 1;
@@ -231,6 +254,7 @@ int main() {
                         cloudiness_rolling_mean[i] /= 7;
                         precipitation_rolling_mean[i] /= 7;
 						
+    	                day["date"] = day_list[i]["date"].s();
 						day["temp_rolling_mean"] = (req_params.unit == "C") ? temp_rolling_mean[i] : techtest::units::c_to_f(temp_rolling_mean[i]);
     	                day["cloudiness_rolling_mean"] = cloudiness_rolling_mean[i];
     	                day["precipitation_rolling_mean"] = precipitation_rolling_mean[i];
@@ -239,7 +263,7 @@ int main() {
                         crow::json::rvalue day_r(day_dump);
     					
 						CROW_LOG_INFO << " data: " << day_list[i + 6]["date"].s() << " i " << i << " temp_rolling_mean " << temp_rolling_mean[i] << " cloudiness_rolling_mean " << cloudiness_rolling_mean[i] << " precipitation_rolling_mean " << precipitation_rolling_mean[i];
-    					days[day_list[i + 6]["date"].s()] = day_r;
+    					days[i] = day_r;
 					}
 
 					auto days_dump = crow::json::load(days.dump());
@@ -247,7 +271,7 @@ int main() {
     				
 					response["city"] = req_params.city;
 					response["unit"] = req_params.unit;
-					response["from"] = techtest::parser::safe_strftime("%Y-%m-%d", std::localtime(&req_params.date_time_t));
+					response["from"] = req_params_date_str;
 					response["to"] = to;
 				    response["days"] = days_r;
 				}
@@ -282,7 +306,9 @@ int main() {
     
 					response["city"] = req_params.city;
 					response["unit"] = req_params.unit;
-					response["from"] = techtest::parser::safe_strftime("%Y-%m-%d", std::localtime(&req_params.date_time_t));
+                    CROW_LOG_INFO << "outer date_time_t " << req_params_date_str;
+
+					response["from"] = req_params_date_str;
 					response["to"] = to;
 				    response["days"] = days_r;
 				}

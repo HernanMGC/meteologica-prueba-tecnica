@@ -1,0 +1,237 @@
+openapi: 3.0.4
+info:
+  title: Meteologica Techtest - Service A - OpenAPI 3.0
+  description: |-
+    Ingest and storing. This service handles the ingest of CSV files 
+    normalizing the data and storing it into a database, as well as it exposes
+    that data as raw data to be read by the user. 
+    
+  contact:
+    email: hernan.gonzalez.calderon@gmail.com
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: health
+    description: Service health status.
+  - name: ingest
+    description: Information on how to ingest data.
+  - name: raw-data
+    description: Information on how to retrieve raw data from the service.
+paths:
+  /health:
+    get:
+      tags:
+        - health
+      summary: Gets current service health status.
+      operationId: getHealthStatus
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ok'
+                
+  /ingest/csv:
+    post:
+      tags:
+        - ingest
+      summary: Ingests a CSV file, normalizes it and stores in a DB.
+      operationId: ingestCSV
+      requestBody:
+        description: The CSV file to read, normalize, ingest, and store into the DB.
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessulIngest'
+          
+  /cities:
+    get:
+      tags:
+          - raw-data
+      summary: Gets the list of cities with at least one weather entry.
+      operationId: getCities
+      responses:
+        '201':
+          description: Ingest succesfull.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cities'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+                
+  /weather:
+    get:
+      tags:
+        - raw-data
+      summary: Weather raw info by city.
+      description: Does a raw data query for daily weather info for a city in a period of time.
+      parameters:
+        - name: city
+          in: query
+          description: City to query about.
+          required: true
+          explode: false
+          schema:
+            type: string
+            example: Madrid
+        - name: from
+          in: query
+          description: Date the query must to start from. 
+          required: true
+          explode: false
+          schema:
+            type: string
+            format: date
+            example: 2025-11-01
+        - name: to
+          in: query
+          description: Date the query must to end. 
+          required: true
+          explode: false
+          schema:
+            type: string
+            format: date
+            example: 2025-11-11
+        - name: page
+          in: query
+          description: Result page number.
+          required: false
+          explode: false
+          schema:
+            type: integer
+            default: 1
+            example: 1
+        - name: limit
+          in: query
+          description: Results per page.
+          required: false
+          explode: false
+          schema:
+            type: integer
+            default: 1
+            example: 5
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceAWeather'
+        '400':
+          description: Parsing errors.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  
+components:
+  schemas:
+    Ok:
+      type: object
+      properties:
+        status:
+          type: string
+          description: Status state
+          example: ok
+      required: 
+        - status
+    Cities:
+      type: object
+      properties:
+        cities:
+          type: array
+          items:
+            type: string
+          example: ["Madrid", "Valencia"]
+      required:
+        - cities
+    SuccessulIngest:
+      type: object
+      properties:
+        rows_inserted:
+          type: integer
+          example: 124
+        rows_rejected:
+          type: integer
+          example: 1
+        elapsed_ms:
+          type: integer
+          example: 253
+        file_checksum:
+          type: string
+          example: sha256:6f71d53ff0f64e9567b372ad603c855c4be31b099b505b4d57b2c8f6c2a84ac5
+      required: 
+        - rows_inserted
+        - rows_rejected
+        - elapsed_ms
+        - file_checksum
+    ServiceAWeather:
+      type: object
+      properties:
+        days:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                example: 2025-11-01
+              city:
+                type: string
+                example: Madrid
+              temp_max:
+                type: number
+                format: double
+                example: 10.0
+              temp_min:
+                type: number
+                format: double
+                example: 5.0
+              precipitation:
+                type: number
+                format: double
+                example: 10.0
+              cloudiness:
+                type: number
+                format: double
+                example: 10.0
+            required: 
+              - date
+              - city
+              - temp_max
+              - temp_min
+              - precipitation
+              - cloudiness
+      required: 
+        - days
+    Error:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+      required:
+        - code
+        - message

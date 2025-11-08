@@ -1,5 +1,6 @@
 // Includes
 #include "crow.h"
+#include "crow/middlewares/cors.h"
 #include "mysql_driver.h"
 #include <cppconn/prepared_statement.h>
 #include <boost/algorithm/string.hpp>
@@ -239,7 +240,23 @@ namespace techtest
 };
 
 int main() {
-    crow::SimpleApp app;
+
+    // Enable CORS
+    crow::App<crow::CORSHandler> app;
+
+    // Customize CORS
+    auto& cors = app.get_middleware<crow::CORSHandler>();
+
+    // clang-format off
+    cors
+      .global()
+        .headers("X-Custom-Header", "Upgrade-Insecure-Requests")
+        .methods("POST"_method, "GET"_method)
+      .prefix("/cors")
+        .origin("example.com")
+      .prefix("/nocors")
+        .ignore();
+    // clang-format on
 
     sql::mysql::MySQL_Driver* driver;
     sql::Connection* con;
@@ -265,10 +282,22 @@ int main() {
         sql::Statement *stmt;
 
         stmt = con->createStatement();
-        res = stmt->executeQuery("SELECT DISTINCT city FROM weather;");
-        while (res->next()) {
-            cities.push_back(res->getString(1));
+        try
+        {        
+            res = stmt->executeQuery("SELECT DISTINCT city FROM weather;");
+            while (res->next()) {
+                cities.push_back(res->getString(1));
+            }
         }
+        catch (std::exception const & ex)
+        {
+            crow::json::wvalue error_response;
+            int response_code = 500; 
+            error_response["code"] = response_code;
+            error_response["message"] = "Internal server error";
+            return crow::response{response_code, error_response};
+        }
+
         delete res;
         delete stmt;
         response["cities"] = cities;
@@ -277,14 +306,17 @@ int main() {
 
     CROW_ROUTE(app, "/weather")
     .methods("GET"_method)([&con](const crow::request& req) {
+        crow::json::wvalue response;
+
     	techtest::req_params_get_weather req_params(req);
 		if (!req_params.is_valid)
 		{
-			return crow::response(500, req_params.error_response_str);
+		    int response_code = 422; 
+            response["code"] = response_code;
+            response["message"] = req_params.error_response_str;
+            return crow::response{response_code, response};
 		}
         int offset = (req_params.page - 1) * req_params.limit;
-
-		std::vector<crow::json::wvalue> days;
         
         sql::ResultSet* res;
         sql::PreparedStatement* prep_stmt;
@@ -299,6 +331,7 @@ int main() {
 
         res = prep_stmt->executeQuery();
 
+		std::vector<crow::json::wvalue> days;
         while (res->next()) {
             crow::json::wvalue day;
             day["date"] = res->getString(1);
@@ -313,7 +346,8 @@ int main() {
         delete res;
         delete prep_stmt;
 
-        return crow::response{200, crow::json::wvalue{{"days", days}}};
+        response["days"] = std::move(days);
+        return crow::response{200, response};
     });
 
     CROW_ROUTE(app, "/ingest/csv")
@@ -372,7 +406,7 @@ int main() {
         std::ostringstream file_checksum_os;
         file_checksum_os << "sha256:" << file_checksum;
         response["file_checksum"] = file_checksum_os.str();
-        return crow::response{201, response};
+        return crow::response{200, response};
     });
 
     app.port(8080).bindaddr("0.0.0.0").multithreaded().run();
