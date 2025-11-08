@@ -321,7 +321,7 @@ int main() {
         sql::ResultSet* res;
         sql::PreparedStatement* prep_stmt;
 
-        std::string query = "SELECT date, city, temp_max, temp_min, precipitation, cloudiness FROM weather WHERE city LIKE ? AND date >= ? AND date <= ? LIMIT ? OFFSET ?;";
+        std::string query = "SELECT date, city, temp_max, temp_min, precipitation, cloudiness FROM weather WHERE city LIKE ? AND date >= ? AND date <= ? ORDER BY date ASC LIMIT ? OFFSET ?;";
         prep_stmt = con->prepareStatement(query);
         prep_stmt->setString(1, req_params.city);
         prep_stmt->setDateTime(2, sql::SQLString(req_params.from));

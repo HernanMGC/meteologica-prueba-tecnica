@@ -1,0 +1,5 @@
+﻿#!/bin/sh
+
+curl "http://localhost:8090/weather/Madrid?date=2025-11-01&days=10&unit=c&agg=rolling7"
+
+echo -e "\n"
