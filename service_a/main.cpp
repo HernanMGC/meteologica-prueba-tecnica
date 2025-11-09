@@ -105,6 +105,14 @@ namespace techtest
 
     namespace parser
     {
+        bool replace(std::string& str, const std::string& from, const std::string& to) {
+            size_t start_pos = str.find(from);
+            if(start_pos == std::string::npos)
+                return false;
+            str.replace(start_pos, from.length(), to);
+            return true;
+        }
+
         bool parse_date(std::string DateStr, std::time_t& OutDate)
         {
             tm date_time = {};
@@ -178,6 +186,7 @@ namespace techtest
                 case EWeatherTableCols::PRECIPITATION:
                 case EWeatherTableCols::CLOUDINESS:
                     {
+                        techtest::parser::replace(column_value, ",", ".");
                         double double_value;
                         if (techtest::parser::parse_double(column_value, double_value))
                         {
@@ -333,13 +342,14 @@ int main() {
 
 		std::vector<crow::json::wvalue> days;
         while (res->next()) {
+            crow::json::wvalue null_value(nullptr);
             crow::json::wvalue day;
             day["date"] = res->getString(1);
             day["city"] = res->getString(2);
-            day["temp_max"] = (float)res->getDouble(3);
-            day["temp_min"] = (float)res->getDouble(4);
-            day["precipitation"] = (float)res->getDouble(5);
-            day["cloudiness"] = (float)res->getDouble(6);
+            day["temp_max"] = !res->isNull(3) ? (float)res->getDouble(3) : null_value;
+            day["temp_min"] = !res->isNull(4) ? (float)res->getDouble(4) : null_value;
+            day["precipitation"] = !res->isNull(5) ? (float)res->getDouble(5) : null_value;
+            day["cloudiness"] = !res->isNull(6) ? (float)res->getDouble(6) : null_value;
             days.push_back(day);
         }
 

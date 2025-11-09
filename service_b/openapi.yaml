@@ -136,22 +136,27 @@ components:
                 type: number
                 format: double
                 example: 10.0
+                nullable: true
               temp_min:
                 type: number
                 format: double
                 example: 5.0
+                nullable: true
               temp_mean:
                 type: number
                 format: double
                 example: 7.5
+                nullable: true
               precipitation:
                 type: number
                 format: double
                 example: 10.0
+                nullable: true
               cloudiness:
                 type: number
                 format: double
                 example: 10.0
+                nullable: true
             required: 
               - date
               - temp_max
@@ -198,19 +203,23 @@ components:
                 type: number
                 format: double
                 example: 37.142857
+                nullable: true
               precipitation_rolling_mean:
                 type: number
                 format: double
                 example: 0.142857
+                nullable: true
               cloudiness_rolling_mean:
                 type: number
                 format: double
                 example: 13.428571
+                nullable: true
             required:
               - date
               - temp_rolling_mean
               - precipitation_rolling_mean
               - cloudiness_rolling_mean
+            nullable: true
         city:
           type: string
           example: Madrid

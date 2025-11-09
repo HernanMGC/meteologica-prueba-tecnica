@@ -204,18 +204,22 @@ components:
                 type: number
                 format: double
                 example: 10.0
+                nullable: true
               temp_min:
                 type: number
                 format: double
                 example: 5.0
+                nullable: true
               precipitation:
                 type: number
                 format: double
                 example: 10.0
+                nullable: true
               cloudiness:
                 type: number
                 format: double
                 example: 10.0
+                nullable: true
             required: 
               - date
               - city
