@@ -6,6 +6,8 @@
 #include <curlpp/Options.hpp>
 #include <iomanip>
 #include <iostream>
+#include <hiredis/hiredis.h>
+#include <openssl/sha.h>
 
 constexpr uint64_t hash(std::string_view str)
 {
@@ -24,9 +26,17 @@ constexpr uint64_t operator"" _hash(const char* str, size_t len)
 
 namespace techtest
 {
-
+	constexpr int CACHE_EXPIRE_TIME = 60 * 10;
 	namespace parser
 	{
+		bool replace(std::string& str, const std::string& from, const std::string& to) {
+			size_t start_pos = str.find(from);
+			if(start_pos == std::string::npos)
+				return false;
+			str.replace(start_pos, from.length(), to);
+			return true;
+		}
+
         std::string safe_strftime(const char *fmt, const std::tm *t)
 		{
             std::size_t len = 10; // Adjust initial length as desired. Maybe based on the length of fmt?
@@ -49,6 +59,90 @@ namespace techtest
             return ((c * 9.0 / 5.0) + 32.0);
         }
     }
+
+	namespace checksum
+	{
+		std::string sha256(const std::string str)
+		{
+			unsigned char hash[SHA256_DIGEST_LENGTH];
+            
+			SHA256_CTX sha256;
+			SHA256_Init(&sha256);
+			SHA256_Update(&sha256, str.c_str(), str.size());
+			SHA256_Final(hash, &sha256);
+            
+			std::stringstream ss;
+            
+			for(int i = 0; i < SHA256_DIGEST_LENGTH; i++){
+				ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>( hash[i] );
+			}
+
+			return ss.str();
+		}
+	}
+
+	namespace service_a
+	{
+		struct service_a_query_params
+		{
+			std::string city = "";
+			std::string from = "";
+			std::string to = "";
+			int page = 0;
+			int limit = 0;
+			
+			service_a_query_params(std::string in_city, std::string in_from, std::string in_to, int in_page, int in_limit) : city(in_city), from(in_from), to(in_to), page(in_page), limit(in_limit) {} 
+		};
+
+		std::string do_service_a_query(service_a_query_params query_params, redisContext& redis_context)
+		{
+			std::ostringstream url;
+			std::ostringstream os;
+			redisReply* reply;
+
+			// Retrieve the value from Redis
+			reply = (redisReply*)redisCommand(&redis_context, "GET name");
+			if (reply->type == REDIS_REPLY_STRING) {
+				std::cout << "Stored string in Redis: " << reply->str << std::endl;
+			} else {
+				std::cout << "Failed to retrieve the value." << std::endl;
+			}
+			freeReplyObject(reply);
+
+			url << "service-a:8080/weather?city=" << query_params.city << "&from=" << query_params.from << "&to=" << query_params.to << "&page=" << query_params.page << "&limit=" << query_params.limit;
+			std::string url_hash = checksum::sha256(url.str());
+
+			std::string service_a_response;
+
+			// Retrieve the value from Redis
+			reply = (redisReply*)redisCommand(&redis_context, "GET %s", url_hash.c_str());
+			CROW_LOG_INFO << "Try get cached Service A URL query: \"GET " << url_hash << "\"";
+			if (reply->type == REDIS_REPLY_STRING) {
+				service_a_response = reply->str;
+				CROW_LOG_INFO << "Stored result in Redis: " << reply->str;
+			} else {
+				os << curlpp::options::Url(url.str());
+				service_a_response = os.str();
+				CROW_LOG_INFO << "No cache available. Query result: " << os.str();
+				
+				freeReplyObject(reply);
+
+				// Set a value in Redis
+				auto response_json_str = crow::json::load(service_a_response);
+				crow::json::rvalue response_json(response_json_str);
+				std::ostringstream response_json_ss;
+				response_json_ss << response_json;
+				reply = (redisReply*)redisCommand(&redis_context, "SET %s %s", url_hash.c_str(), service_a_response.c_str());
+				CROW_LOG_INFO << "Caching Query result \"SET " << url_hash << " " << response_json_ss.str() << "\" ...";
+
+				freeReplyObject(reply);
+				reply = (redisReply*)redisCommand(&redis_context, "EXPIRE %s %d", url_hash.c_str(), techtest::CACHE_EXPIRE_TIME);
+			}
+			freeReplyObject(reply);
+
+			return service_a_response;
+		}
+	}
 
 	struct req_params_get_weather
 	{
@@ -162,15 +256,33 @@ int main() {
         .ignore();
     // clang-format on
 
+
+	// Connect to the Redis server
+	redisContext* redis_context = redisConnect("cache", 6379);
+	if (redis_context == nullptr || redis_context->err) {
+		if (redis_context) {
+			CROW_LOG_ERROR << "Connection error: " << redis_context->errstr;
+		} else {
+			CROW_LOG_ERROR << "Connection error: can't allocate Redis redis_context";
+		}
+		CROW_LOG_ERROR << "UNEXPECTED ERROR";
+	}
+
+	redisReply* reply = (redisReply*)redisCommand(redis_context, "AUTH %s", std::getenv("REDIS_PASSWORD"));
+	if (reply->type == REDIS_REPLY_ERROR) {
+		/* Authentication failed */
+	}
+	freeReplyObject(reply);
+
     CROW_ROUTE(app, "/health")
-	.methods("GET"_method)([]() {
+	.methods("GET"_method)([&redis_context, &reply]() {
 		crow::json::wvalue health_status;
 		health_status["status"] = "ok";
 		return crow::response{200, health_status};
     });
 
     CROW_ROUTE(app, "/weather/<string>")
-    .methods("GET"_method)([](const crow::request& req, std::string city) {
+    .methods("GET"_method)([&redis_context](const crow::request& req, std::string city) {
     	techtest::req_params_get_weather req_params(req, city);
 		if (!req_params.is_valid)
 		{
@@ -220,15 +332,8 @@ int main() {
 					std::string to = techtest::parser::safe_strftime("%Y-%m-%d", std::localtime(&to_date_time_t));
 					int page = 1;
 					
-					
-					std::ostringstream os;
-					std::ostringstream url;
-
-					url << "service-a:8080/weather?city=" << req_params.city << "&from=" << from << "&to=" << to << "&page=" << page << "&limit=" << limit;
-					os << curlpp::options::Url(url.str());
-					CROW_LOG_INFO << url.str();
-					std::string service_a_response = os.str();
-					CROW_LOG_INFO << os.str();
+					techtest::service_a::service_a_query_params query_params(req_params.city, from, to, page, limit);
+					std::string service_a_response = techtest::service_a::do_service_a_query(query_params, *redis_context);
 
 					auto response_json_str = crow::json::load(service_a_response);
 					crow::json::rvalue response_json(response_json_str);
@@ -336,9 +441,6 @@ int main() {
 			case "daily"_hash:
 			default:
 			{
-				std::ostringstream os;
-				std::ostringstream url;
-
 				int limit = req_params.days;
 
 				std::time_t req_params_date_time_t;
@@ -360,10 +462,8 @@ int main() {
 				std::string to = techtest::parser::safe_strftime("%Y-%m-%d", std::localtime(&to_date_time_t));
 				int page = 1;
 
-				url << "service-a:8080/weather?city=" << req_params.city << "&from=" << from << "&to=" << to << "&page=" << page << "&limit=" << limit;
-				os << curlpp::options::Url(url.str());
-				CROW_LOG_INFO << url.str();
-				std::string service_a_response = os.str();
+				techtest::service_a::service_a_query_params query_params(req_params.city, from, to, page, limit);
+				std::string service_a_response = techtest::service_a::do_service_a_query(query_params, *redis_context);
 
 				auto response_json_str = crow::json::load(service_a_response);
 				crow::json::rvalue response_json(response_json_str);
@@ -446,6 +546,9 @@ int main() {
     });
 
     app.port(8080).bindaddr("0.0.0.0").multithreaded().run();
+
+	// Free the redis_context
+	redisFree(redis_context);
 
     return 0;
 }
