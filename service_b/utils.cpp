@@ -109,18 +109,6 @@ std::string techtest::service_a::do_service_a_query(service_a_query_params query
 	std::ostringstream os;
 	redisReply* reply;
 
-	// Retrieve the value from Redis
-	reply = (redisReply*)redisCommand(&redis_context, "GET name");
-	if (reply->type == REDIS_REPLY_STRING)
-	{
-		std::cout << "Stored string in Redis: " << reply->str << std::endl;
-	}
-	else
-	{
-		std::cout << "Failed to retrieve the value." << std::endl;
-	}
-	freeReplyObject(reply);
-
 	url << "service-a:8080/weather?city=" << query_params.city << "&from=" << query_params.from << "&to=" << query_params.to << "&page=" << query_params.page << "&limit=" << query_params.limit;
 	std::string url_hash = checksum::sha256(url.str());
 
