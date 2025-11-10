@@ -24,7 +24,8 @@ RUN git clone https://github.com/CrowCpp/Crow.git crow
 COPY . .
 
 # Build the application using g++
-RUN g++ -Icrow/include -Iasio/asio/include -L/usr/local/lib -o service_b main.cpp -lpthread -lcurlpp -lcurl -lhiredis -lssl -lcrypto
+RUN g++ -c -Icrow/include -Iasio/asio/include utils.cpp
+RUN g++ -Icrow/include -Iasio/asio/include -L/usr/local/lib -o service_b main.cpp utils.o -lpthread -lcurlpp -lcurl -lhiredis -lssl -lcrypto
 
 # Stage 2: Runtime Stage
 # Use an official GCC image (same as the build stage) for runtime
